@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sporty — מאמן עומס יסף</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Sporty</h1>
+      <p>אפליקציית כושר אישית לעקביות, עומס יסף, והתאוששות חכמה</p>
+    </header>
+
+    <main>
+      <section class="panel">
+        <h2>אימון בזמן אמת</h2>
+        <div class="row">
+          <label for="exercise">תרגיל</label>
+          <select id="exercise"></select>
+        </div>
+        <div id="ghost" class="ghost">Ghost Mode: אין אימון קודם לתרגיל זה.</div>
+
+        <form id="set-form" class="grid">
+          <label>סט
+            <input id="set-number" type="number" min="1" value="1" required />
+          </label>
+          <label>משקל (ק"ג)
+            <input id="weight" type="number" min="0" step="0.5" required />
+          </label>
+          <label>חזרות
+            <input id="reps" type="number" min="1" required />
+          </label>
+          <button type="submit">שמור סט</button>
+        </form>
+
+        <div class="rest-box">
+          <strong>טיימר מנוחה פתוח:</strong>
+          <span id="rest-timer">00:00</span>
+        </div>
+
+        <div class="workout-summary">
+          <h3>סיכום אימון נוכחי</h3>
+          <p>נפח כולל: <span id="current-volume">0</span> ק"ג</p>
+          <p>נקודות משוערות מהאימון: <span id="session-points">0.0</span></p>
+          <button id="finish-workout">סיום אימון</button>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>מפת חום התאוששות</h2>
+        <figure class="avatar-wrap">
+          <img src="assets/avatar-placeholder.svg" alt="מפת גוף - Placeholder" class="avatar-placeholder" />
+          <figcaption class="small">Placeholder למפת גוף (ניתן להחליף באיור אמיתי בהמשך)</figcaption>
+        </figure>
+        <div id="heatmap" class="heatmap"></div>
+      </section>
+
+      <section class="panel">
+        <h2>מה לעשות היום?</h2>
+        <ul id="recommendations"></ul>
+      </section>
+
+      <section class="panel">
+        <h2>מגמת נפח (Trendline)</h2>
+        <label for="trend-exercise">בחר תרגיל:</label>
+        <select id="trend-exercise"></select>
+        <canvas id="trend-canvas" width="500" height="220"></canvas>
+      </section>
+
+      <section class="panel">
+        <h2>רמות ונקודות לפי שריר</h2>
+        <div id="muscle-levels"></div>
+      </section>
+    </main>
+
+    <template id="recap-template">
+      <div class="recap-overlay">
+        <div class="recap">
+          <h3>Workout Recap</h3>
+          <p id="recap-volume"></p>
+          <p id="recap-streak"></p>
+          <p id="recap-points"></p>
+          <button id="close-recap">סגור</button>
+        </div>
+      </div>
+    </template>
+
+    <script src="app.js"></script>
+  </body>
+</html>
