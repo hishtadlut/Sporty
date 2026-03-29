@@ -1,36 +1,18 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.renderRecommendations = exports.renderHeatmap = void 0;
-const svgMap_js_1 = require("./svgMap.js");
 const api_js_1 = require("./api.js");
+const heatmap3D_js_1 = require("./heatmap3D.js");
 const renderHeatmap = async () => {
     const container = document.getElementById('heatmap-render');
     if (!container)
         return;
-    container.innerHTML = (0, svgMap_js_1.getBodySVG)();
+    // Initialize the 3D scene (this handles downloading the .glb and rendering)
+    (0, heatmap3D_js_1.init3DHeatmap)('heatmap-render');
     try {
         const stats = await (0, api_js_1.fetchAPI)('/muscle-stats');
-        const now = new Date();
-        stats.forEach((stat) => {
-            const el = document.getElementById(`muscle-${stat.muscle_group}`);
-            if (el) {
-                if (!stat.last_trained_date) {
-                    el.setAttribute('fill', '#ef4444'); // Red (neglected)
-                    return;
-                }
-                const lastTrained = new Date(stat.last_trained_date);
-                const diffDays = Math.floor((now.getTime() - lastTrained.getTime()) / (1000 * 60 * 60 * 24));
-                if (diffDays >= 7) {
-                    el.setAttribute('fill', '#ef4444'); // Red
-                }
-                else if (diffDays >= 2) {
-                    el.setAttribute('fill', '#4ade80'); // Green (recovered)
-                }
-                else {
-                    el.setAttribute('fill', '#3b82f6'); // Blue (recovering)
-                }
-            }
-        });
+        // Apply colors based on the stats
+        (0, heatmap3D_js_1.applyHeatmapColors)(stats);
     }
     catch (err) {
         console.error(err);

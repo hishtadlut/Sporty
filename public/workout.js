@@ -86,6 +86,8 @@ const handleAddSet = () => {
     const exSelect = document.getElementById('exercise-select');
     const repsInput = document.getElementById('reps-input');
     const weightInput = document.getElementById('weight-input');
+    if (!exSelect || !repsInput || !weightInput)
+        return;
     const exerciseId = parseInt(exSelect.value);
     const reps = parseInt(repsInput.value);
     const weight = parseFloat(weightInput.value);
@@ -93,12 +95,14 @@ const handleAddSet = () => {
         alert('Please select an exercise and enter valid reps/weight.');
         return;
     }
-    const volume = reps * weight;
+    const exerciseOptionText = (exSelect && exSelect.options && exSelect.options[exSelect.selectedIndex]) ? exSelect.options[exSelect.selectedIndex].text : '';
+    const isBodyweight = exercises.find(e => e.id === exerciseId)?.is_bodyweight === 1;
+    const volume = isBodyweight ? reps : reps * weight;
     activeWorkoutSets.push({
         exerciseId,
-        exerciseName: exSelect.options[exSelect.selectedIndex].text,
+        exerciseName: exerciseOptionText,
         reps,
-        weight,
+        weight: isBodyweight ? 0 : weight,
         volume
     });
     renderCurrentSets();
