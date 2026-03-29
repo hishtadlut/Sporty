@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="340" height="220" viewBox="0 0 340 220" role="img" aria-label="Body placeholder">
+  <rect width="340" height="220" fill="#0b1220" rx="14"/>
+  <g fill="#1e293b" stroke="#334155" stroke-width="2">
+    <circle cx="170" cy="40" r="22"/>
+    <rect x="145" y="64" width="50" height="70" rx="20"/>
+    <rect x="110" y="72" width="30" height="76" rx="14"/>
+    <rect x="200" y="72" width="30" height="76" rx="14"/>
+    <rect x="145" y="135" width="20" height="70" rx="12"/>
+    <rect x="175" y="135" width="20" height="70" rx="12"/>
+  </g>
+  <g font-size="11" fill="#94a3b8" font-family="Arial, sans-serif" text-anchor="middle">
+    <text x="170" y="16">HEATMAP PLACEHOLDER</text>
+    <text x="170" y="214">Replace with final avatar illustration</text>
+  </g>
+</svg>
