@@ -1,51 +1,87 @@
-use rusqlite::{Connection, params};
-use chrono::{Local, NaiveDate};
+use chrono::{Duration, Local, NaiveDate};
+use rusqlite::{params, Connection};
+
+pub struct WorkoutScoreResult {
+    pub earned_points: f64,
+    pub level: i32,
+    pub points: f64,
+    pub points_to_next_level: f64,
+    pub exercise_streak: i32,
+}
+
+pub fn points_to_next_level(level: i32) -> f64 {
+    (level + 7).max(8) as f64
+}
 
 pub fn update_scores(conn: &Connection) -> Result<(), String> {
     let today = Local::now().naive_local().date();
 
-    // Process penalties for all muscle groups
-    let mut stmt = conn.prepare("SELECT id, last_trained_date, points, level FROM muscle_groups").map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, last_trained_date, last_penalty_date, points, level
+             FROM exercises",
+        )
+        .map_err(|e| e.to_string())?;
 
-    let rows = stmt.query_map([], |row| {
-        Ok((
-            row.get::<_, i32>(0)?,
-            row.get::<_, Option<String>>(1)?,
-            row.get::<_, f64>(2)?,
-            row.get::<_, i32>(3)?,
-        ))
-    }).map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i32>(0)?,
+                row.get::<_, Option<String>>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, f64>(3)?,
+                row.get::<_, i32>(4)?,
+            ))
+        })
+        .map_err(|e| e.to_string())?;
 
-    for row_res in rows {
-        let (id, last_trained, mut points, mut level) = row_res.map_err(|e| e.to_string())?;
+    for row in rows {
+        let (id, last_trained, last_penalty, mut points, mut level) =
+            row.map_err(|e| e.to_string())?;
 
-        if let Some(date_str) = last_trained {
-            if let Ok(last_date) = NaiveDate::parse_from_str(&date_str, "%Y-%m-%d") {
-                let diff = (today - last_date).num_days();
+        let Some(last_trained) = last_trained else {
+            continue;
+        };
 
-                if diff >= 14 {
-                    // Start deducting 0.1 every day after 14 days
-                    let days_penalty = diff - 13;
-                    points -= 0.1 * days_penalty as f64;
-                }
-            }
+        let Ok(last_trained_date) = NaiveDate::parse_from_str(&last_trained, "%Y-%m-%d") else {
+            continue;
+        };
+
+        let first_penalty_date = last_trained_date + Duration::days(14);
+        if today < first_penalty_date {
+            continue;
         }
 
-        // Handle Level down
+        let next_penalty_date = match last_penalty {
+            Some(value) => NaiveDate::parse_from_str(&value, "%Y-%m-%d")
+                .map(|date| date + Duration::days(1))
+                .unwrap_or(first_penalty_date),
+            None => first_penalty_date,
+        };
+
+        if next_penalty_date > today {
+            continue;
+        }
+
+        let penalty_days = (today - next_penalty_date).num_days() + 1;
+        points -= 0.1 * penalty_days as f64;
+
         while points < 0.0 && level > 1 {
             level -= 1;
-            points += 10.0; // Assuming 10 points per level
+            points += points_to_next_level(level);
         }
 
-        // Cannot go below Level 1, 0 points
         if level == 1 && points < 0.0 {
             points = 0.0;
         }
 
         conn.execute(
-            "UPDATE muscle_groups SET points = ?1, level = ?2 WHERE id = ?3",
-            params![points, level, id]
-        ).map_err(|e| e.to_string())?;
+            "UPDATE exercises
+             SET points = ?1, level = ?2, last_penalty_date = ?3
+             WHERE id = ?4",
+            params![points, level, today.format("%Y-%m-%d").to_string(), id],
+        )
+        .map_err(|e| e.to_string())?;
     }
 
     Ok(())
@@ -54,93 +90,138 @@ pub fn update_scores(conn: &Connection) -> Result<(), String> {
 pub fn calculate_workout_points(
     conn: &Connection,
     exercise_id: i32,
-    total_volume: f64,
+    workout_log_id: i64,
+    normalized_volume: f64,
     is_pr: bool,
-    today_str: &str
-) -> Result<(), String> {
+    today: NaiveDate,
+) -> Result<WorkoutScoreResult, String> {
+    let mut earned_points = frequency_bonus(conn, exercise_id, today)?;
 
-    let muscle_group_id: i32 = conn.query_row(
-        "SELECT muscle_group_id FROM exercises WHERE id = ?1",
-        params![exercise_id],
-        |row| row.get(0)
-    ).map_err(|e| e.to_string())?;
+    let (volume_bonus, exercise_streak) =
+        exercise_volume_bonus(conn, exercise_id, workout_log_id, normalized_volume)?;
+    earned_points += volume_bonus;
 
-    // Check frequency in last 7 days for THIS muscle group
-    let last_week = (Local::now().naive_local().date() - chrono::Duration::days(7)).format("%Y-%m-%d").to_string();
-
-    let count: i32 = conn.query_row(
-        "SELECT COUNT(DISTINCT date) FROM workout_logs w
-         JOIN exercises e ON w.exercise_id = e.id
-         WHERE e.muscle_group_id = ?1 AND w.date >= ?2 AND w.date <= ?3",
-        params![muscle_group_id, last_week, today_str],
-        |row| row.get(0)
-    ).unwrap_or(0);
-
-    let mut earned_points = 0.0;
-
-    // Frequency points logic (assuming this current workout makes the count go up by 1)
-    let new_count = count; // count already includes today since we insert log first
-
-    match new_count {
-        1 => earned_points += 0.1,
-        2 => earned_points += 1.3,
-        _ if new_count >= 3 => earned_points += 1.5, // Treating >= 3 as "2.5x"
-        _ => ()
+    if is_pr {
+        earned_points += 0.5;
     }
 
-    // Check streak for THIS exercise
-    let mut streak = 0;
-    let prev_workouts: Vec<f64> = {
-        let mut stmt = conn.prepare(
-            "SELECT total_volume FROM workout_logs WHERE exercise_id = ?1 AND date < ?2 ORDER BY date DESC LIMIT 10"
-        ).map_err(|e| e.to_string())?;
+    let (mut points, mut level) = conn
+        .query_row(
+            "SELECT points, level FROM exercises WHERE id = ?1",
+            params![exercise_id],
+            |row| Ok((row.get::<_, f64>(0)?, row.get::<_, i32>(1)?)),
+        )
+        .map_err(|e| e.to_string())?;
 
-        let iter = stmt.query_map(params![exercise_id, today_str], |row| row.get(0)).map_err(|e| e.to_string())?;
-        iter.filter_map(|r| r.ok()).collect()
-    };
+    points += earned_points;
 
-    let mut current_vol_to_beat = total_volume;
-    for prev_vol in prev_workouts {
-        if current_vol_to_beat >= prev_vol {
-            streak += 1;
-            current_vol_to_beat = prev_vol;
+    while points >= points_to_next_level(level) {
+        points -= points_to_next_level(level);
+        level += 1;
+    }
+
+    conn.execute(
+        "UPDATE exercises SET points = ?1, level = ?2 WHERE id = ?3",
+        params![points, level, exercise_id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(WorkoutScoreResult {
+        earned_points,
+        level,
+        points,
+        points_to_next_level: points_to_next_level(level),
+        exercise_streak,
+    })
+}
+
+fn frequency_bonus(conn: &Connection, exercise_id: i32, today: NaiveDate) -> Result<f64, String> {
+    let last_7_days = (today - Duration::days(6)).format("%Y-%m-%d").to_string();
+    let last_14_days = (today - Duration::days(13)).format("%Y-%m-%d").to_string();
+    let today_str = today.format("%Y-%m-%d").to_string();
+
+    let count_7: i32 = conn
+        .query_row(
+            "SELECT COUNT(DISTINCT date)
+             FROM workout_logs
+             WHERE exercise_id = ?1
+               AND date BETWEEN ?2 AND ?3",
+            params![exercise_id, last_7_days, today_str],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+
+    let count_14: i32 = conn
+        .query_row(
+            "SELECT COUNT(DISTINCT date)
+             FROM workout_logs
+             WHERE exercise_id = ?1
+               AND date BETWEEN ?2 AND ?3",
+            params![exercise_id, last_14_days, today_str],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+
+    if count_14 >= 5 {
+        Ok(1.5)
+    } else if count_7 >= 2 {
+        Ok(1.3)
+    } else if count_7 >= 1 {
+        Ok(0.1)
+    } else {
+        Ok(0.0)
+    }
+}
+
+fn exercise_volume_bonus(
+    conn: &Connection,
+    exercise_id: i32,
+    workout_log_id: i64,
+    normalized_volume: f64,
+) -> Result<(f64, i32), String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT normalized_volume
+             FROM workout_logs
+             WHERE exercise_id = ?1
+               AND id <> ?2
+             ORDER BY date DESC, id DESC
+             LIMIT 12",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let previous: Vec<f64> = stmt
+        .query_map(params![exercise_id, workout_log_id], |row| row.get(0))
+        .map_err(|e| e.to_string())?
+        .filter_map(|row| row.ok())
+        .collect();
+
+    let meets_target = normalized_volume >= 1.0;
+    let improves_previous = previous
+        .first()
+        .map(|prev| normalized_volume >= *prev)
+        .unwrap_or(meets_target);
+
+    if !meets_target && !improves_previous {
+        return Ok((0.0, 0));
+    }
+
+    let mut earned_points = 0.1;
+    let mut streak_count = 1;
+    let mut comparison_value = normalized_volume;
+
+    for prev in previous {
+        if comparison_value >= prev {
+            streak_count += 1;
+            comparison_value = prev;
         } else {
             break;
         }
     }
 
-    // Streak logic
-    if streak >= 3 && streak < 6 {
+    if streak_count == 3 || streak_count >= 6 {
         earned_points += 0.1;
-    } else if streak >= 6 {
-        earned_points += 0.2; // Extra for high streak
     }
 
-    // PR logic
-    if is_pr {
-        earned_points += 0.5;
-    }
-
-    // Add points to muscle group
-    let mut mg_row = conn.query_row(
-        "SELECT points, level FROM muscle_groups WHERE id = ?1",
-        params![muscle_group_id],
-        |row| Ok((row.get::<_, f64>(0)?, row.get::<_, i32>(1)?))
-    ).map_err(|e| e.to_string())?;
-
-    let mut points = mg_row.0 + earned_points;
-    let mut level = mg_row.1;
-
-    // Level up logic (10 points per level)
-    while points >= 10.0 {
-        level += 1;
-        points -= 10.0;
-    }
-
-    conn.execute(
-        "UPDATE muscle_groups SET points = ?1, level = ?2 WHERE id = ?3",
-        params![points, level, muscle_group_id]
-    ).map_err(|e| e.to_string())?;
-
-    Ok(())
+    Ok((earned_points, streak_count))
 }
